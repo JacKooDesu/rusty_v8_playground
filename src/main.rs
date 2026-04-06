@@ -1,4 +1,4 @@
-use v8::{self, ContextOptions, HandleScope};
+use v8::{self, ContextOptions, ContextScope, HandleScope};
 
 #[derive(Debug)]
 struct Point {
@@ -52,6 +52,12 @@ fn test_call_js_function(
     context: v8::Local<v8::Context>,
     context_scope: &mut v8::ContextScope<HandleScope>,
 ) {
+    let mut point = Box::new(Point { x: 0, y: 0 });
+    let external = v8::External::new(
+        context_scope,
+        &mut *point as *mut Point as *mut std::ffi::c_void,
+    );
+
     let fn_str = v8::String::new(context_scope, "Test").unwrap();
     let func = context
         .global(context_scope)
@@ -68,15 +74,20 @@ fn test_call_js_function(
         )
         .map(|x| v8::Local::<v8::Function>::try_from(x).unwrap())
         .unwrap();
-    let obj = point_ctor
-        .new_instance(
-            context_scope,
-            &[
-                v8::Integer::new(context_scope, 0).into(),
-                v8::Integer::new(context_scope, 1).into(),
-            ],
-        )
-        .unwrap();
+    let obj_tmpl = v8::ObjectTemplate::new(context_scope);
+    obj_tmpl.set_internal_field_count(1);
+    let obj = obj_tmpl.new_instance(context_scope).unwrap();
+
+    obj.set_prototype(
+        context_scope,
+        point_ctor
+            .get(
+                context_scope,
+                v8::String::new(context_scope, "prototype").unwrap().into(),
+            )
+            .unwrap(),
+    );
+    obj.set_internal_field(0, external.into());
 
     let result = func.call(context_scope, recv.into(), &[obj.into()]);
 
@@ -88,6 +99,7 @@ fn test_call_js_function(
         let point_ref = unsafe { &*point_ptr };
         println!("x: {}", point_ref.x);
         println!("y: {}", point_ref.y);
+        debug_assert_eq!(point_ptr, &mut *point as *mut Point);
     }
 }
 
